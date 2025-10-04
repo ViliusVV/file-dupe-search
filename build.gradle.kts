@@ -17,10 +17,11 @@ repositories {
 application {
     // Replace with your package + main class if needed
     mainClass.set("viliusvv.MainKt")
+    applicationDefaultJvmArgs = listOf("--enable-native-access=ALL-UNNAMED")
 }
 
 dependencies {
-
+    implementation("com.formdev:flatlaf:3.6.1")
 
     implementation(kotlin("stdlib-jdk8"))
 

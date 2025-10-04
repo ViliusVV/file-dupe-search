@@ -1,0 +1,12 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Launch" type="JetRunConfigurationType">
+    <option name="MAIN_CLASS_NAME" value="viliusvv.MainKt" />
+    <module name="file-dupe-search.main" />
+    <shortenClasspath name="NONE" />
+    <option name="VM_PARAMETERS" value="--enable-native-access=ALL-UNNAMED" />
+    <option name="WORKING_DIRECTORY" value="$ProjectFileDir$" />
+    <method v="2">
+      <option name="Make" enabled="true" />
+    </method>
+  </configuration>
+</component>
