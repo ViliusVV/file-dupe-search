@@ -30,12 +30,7 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
-tasks.test {
-    useJUnitPlatform()
-}
-
-// fat jar build task
-tasks.register<Jar>("fatJar") {
+val fatJarTask = tasks.register<Jar>("fatJar") {
     group = "build"
     description = "Assembles a fat jar archive containing the main classes and their dependencies."
 
@@ -54,16 +49,19 @@ tasks.register<Jar>("fatJar") {
     manifest {
         attributes["Main-Class"] = application.mainClass.get()
     }
+}
 
-    tasks.assemble {
-        dependsOn(this)
-    }
+tasks.assemble {
+    finalizedBy(fatJarTask)
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
 
 java {
     sourceCompatibility = JavaVersion.VERSION_17
     targetCompatibility = JavaVersion.VERSION_17
-
 }
 
 kotlin {
