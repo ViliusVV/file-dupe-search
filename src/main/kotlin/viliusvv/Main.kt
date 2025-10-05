@@ -3,15 +3,11 @@ package viliusvv
 import com.formdev.flatlaf.FlatDarkLaf
 import kotlinx.coroutines.*
 import kotlinx.coroutines.swing.Swing
+import listSubdirAndFiles
 import java.awt.BorderLayout
-import java.awt.Color
-import java.awt.Component
 import java.awt.Dimension
-import java.awt.FlowLayout
-import java.awt.GridBagLayout
 import java.awt.GridLayout
 import java.io.File
-import java.util.Queue
 import java.util.concurrent.ConcurrentLinkedQueue
 import javax.swing.*
 import javax.swing.border.EmptyBorder
@@ -20,11 +16,17 @@ import javax.swing.table.DefaultTableModel
 
 lateinit var mainFrame: JFrame
 
+// Create a CoroutineScope for background work and UI updates.
+// We'll use Dispatchers.Default for background delays and Dispatchers.Swing for UI updates.
+val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Swing)
+val workScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
 var selectedDirs = mutableListOf<File>()
 
-var isProcessing = false
 var fileQueue = ConcurrentLinkedQueue<File>()
-var fileMap = mutableMapOf<String, FileEntry>()
+var fileEntries = mutableListOf<FileEntry>()
+
+var infoModel = MainDataModel()
 
 fun main() {
     println("Starting....")
@@ -65,26 +67,69 @@ fun main() {
             println("Selected dirs: $selectedDirs")
         }
 
-        val procButton = JButton("Process")
-        procButton.addActionListener {
-            isProcessing = !isProcessing
-            procButton.text = if (isProcessing) "Stop" else "Process"
+        val statusPanel = createStatusPanel()
+        val startBtn = JButton("Start")
+        startBtn.addActionListener {
+            infoModel.inProgress = true
+
+            workScope.launch {
+                listSubdirAndFiles(selectedDirs)
+            }
+            resetFocus()
+        }
+
+
+        val stopBtn = JButton("Stop")
+        stopBtn.isEnabled = false
+        stopBtn.addActionListener {
+            infoModel.inProgress = false
+            resetFocus()
+        }
+
+        val resetBtn = JButton("Reset")
+        resetBtn.addActionListener {
+            reset()
+        }
+
+        infoModel.addChangeListener {
+            startBtn.isEnabled = !infoModel.inProgress
+            stopBtn.isEnabled = infoModel.inProgress
+
         }
 
         // Put inside a scroll pane
         val table = createTable(files)
         val scrollPane = JScrollPane(table)
 
-        val buttonPanel = JPanel(BorderLayout())
-        buttonPanel.add(dirButton, BorderLayout.WEST)
-        buttonPanel.add(procButton, BorderLayout.EAST)
+        val buttonPanel = JPanel(GridLayout(4, 1, 0, 5))
+        buttonPanel.add(dirButton)
+        buttonPanel.add(startBtn)
+        buttonPanel.add(stopBtn)
+        buttonPanel.add(resetBtn)
+
+        val checkBoxPanel = JPanel(GridLayout(4, 1, 0, 5))
+        val nameCheck = JCheckBox("Compare names", infoModel.compareNames)
+        nameCheck.addActionListener {
+            infoModel.compareNames = nameCheck.isSelected
+        }
+
+        val hashCheck = JCheckBox("Compare hash", infoModel.compareHash)
+        hashCheck.addActionListener {
+            infoModel.compareHash = hashCheck.isSelected
+        }
+        checkBoxPanel.add(nameCheck)
+        checkBoxPanel.add(hashCheck)
 
 
-        val topbarPanel = JPanel(BorderLayout())
+        val topbarPanel = JPanel(GridLayout(1,5))
         topbarPanel.border = EmptyBorder(2, 5, 5, 5)
         topbarPanel.size = Dimension(mainFrame.width, 40)
-        topbarPanel.add(JLabel("Files found: ${files.size}"), BorderLayout.LINE_START)
-        topbarPanel.add(buttonPanel, BorderLayout.LINE_END)
+        topbarPanel.add(statusPanel)
+        // add dummy panels to fill space
+        topbarPanel.add(checkBoxPanel)
+        topbarPanel.add(JPanel())
+        topbarPanel.add(JPanel())
+        topbarPanel.add(buttonPanel)
 
         val tablesPanel = JPanel(BorderLayout())
         tablesPanel.add(scrollPane, BorderLayout.CENTER)
@@ -98,36 +143,71 @@ fun main() {
         mainFrame.pack()
         mainFrame.setLocationRelativeTo(null)
 
-        // Create a CoroutineScope for background work and UI updates.
-        // We'll use Dispatchers.Default for background delays and Dispatchers.Swing for UI updates.
-        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
         // Launch a repeating job that adds a row every second
-        scope.launch {
-            var counter = 1
+        appScope.launch {
             while (isActive) {
                 delay(500L) // wait 1 second
 
-                val id = counter++
-//                val timestamp = java.time.LocalTime.now().withNano(0).toString()
-//                val name = listOf("Alice", "Bob", "Charlie", "Dana").random()
-//                val value = Random.nextInt(0, 100)
-
                 // Switch to the Swing dispatcher to mutate the table model on the EDT
                 withContext(Dispatchers.Swing) {
-                    val dir = File("C:/Temp/TestDir${(1..5).random()}")
-                    addDirToSelection(selectionTable, dir)
-//                    model.addRow(arrayOf(timestamp, id, name, value))
-//
-//                    // Optionally scroll to the newly added row
-                    val lastRow = selectedDirs.size - 1
-                    if (lastRow >= 0) {
-                        selectionTable.scrollRectToVisible(selectionTable.getCellRect(lastRow, 0, true))
+                    // update info model
+                    if (infoModel.inProgress) {
+                        infoModel.inQueue = fileQueue.size
+                        infoModel.processedFiles = fileEntries.size
+                        infoModel.totalFiles = infoModel.inQueue + infoModel.processedFiles
                     }
                 }
             }
         }
+
+//        appScope.launch {
+//            while (isActive) {
+//                delay(250L)
+//                fileQueue.add(File("C:\\Temp\\testfile_${(1..1000).random()}.txt"))
+//            }
+//        }
     }
+}
+
+fun createStatusPanel(): JPanel {
+    val statusPanel = JPanel(GridLayout(5,1))
+    val statusLabel = JLabel("Status: ${infoModel.inProgressString}")
+    val msgLabel = JLabel("Message: ${infoModel.statusMessage}")
+    val filesLabel = JLabel("Total files: ${infoModel.totalFiles}")
+    val queueLabel = JLabel("Files in queue: ${infoModel.inQueue}")
+    val processedLabel = JLabel("Files processed: ${infoModel.processedFiles}")
+
+    statusPanel.add(statusLabel)
+    statusPanel.add(msgLabel)
+    statusPanel.add(processedLabel)
+    statusPanel.add(filesLabel)
+    statusPanel.add(queueLabel)
+
+    infoModel.addChangeListener {
+        msgLabel.text = "Message: ${infoModel.statusMessage}"
+        statusLabel.text = "Status: ${infoModel.inProgressString}"
+        filesLabel.text = "Total files: ${infoModel.totalFiles}"
+        queueLabel.text = "Files in queue: ${infoModel.inQueue}"
+        processedLabel.text = "Files processed: ${infoModel.processedFiles}"
+    }
+
+    return statusPanel
+}
+
+fun reset() {
+    fileQueue.clear()
+    fileEntries.clear()
+
+    infoModel.inProgress = false
+    infoModel.inQueue = 0
+    infoModel.processedFiles = 0
+    infoModel.totalFiles = 0
+    infoModel.statusMessage = "Reset done"
+}
+
+fun resetFocus() {
+    mainFrame.requestFocus()
 }
 
 fun addDirToSelection(table: JTable, dir: File) {
