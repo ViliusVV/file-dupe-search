@@ -1,6 +1,10 @@
 package viliusvv
 
+import addFilesToTable
 import com.formdev.flatlaf.FlatDarkLaf
+import findIdenticalFileNames
+import findIdenticalFileSizes
+import findIdenticalFiles
 import kotlinx.coroutines.*
 import kotlinx.coroutines.swing.Swing
 import listSubdirAndFiles
@@ -26,15 +30,14 @@ var selectedDirs = mutableListOf<File>()
 var fileQueue = ConcurrentLinkedQueue<File>()
 var fileEntries = mutableListOf<FileEntry>()
 
+
+
+var filesTableModel = PersonTableModel(fileEntries)
 var infoModel = MainDataModel()
 
 fun main() {
     println("Starting....")
     FlatDarkLaf.setup();
-
-    // get current dir
-//    val files = listSubdirAndFiles(selectedDirs)
-    val files = emptyList<FileEntry>()
 
 
     SwingUtilities.invokeLater {
@@ -46,7 +49,7 @@ fun main() {
 
 
         val selectionTable = createSelectionTable(selectedDirs)
-        val scrollPane2 = JScrollPane(selectionTable)
+        val selectinTablePane = JScrollPane(selectionTable)
 
         val chooser = JFileChooser()
         chooser.fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
@@ -75,6 +78,39 @@ fun main() {
             workScope.launch {
                 listSubdirAndFiles(selectedDirs)
             }
+
+            workScope.launch {
+                addFilesToTable()
+
+                val names = findIdenticalFileNames()
+                println("Names: ${names.size} ->\n ${names.map{ "${it.key} -> ${it.value.size}"}.joinToString("\n")}")
+
+                val sizes = findIdenticalFileSizes()
+                println("Sizes: ${sizes.size} ->\n ${names.map{ "${it.key} -> ${it.value.size}"}.joinToString("\n")}")
+
+                infoModel.identicalFileNames = names.size
+                infoModel.identicalFileSizes = sizes.size
+
+
+                val hashes = findIdenticalFiles()
+                infoModel.identicalHashes = hashes.size
+                infoModel.identicalFiles = hashes.values.sumOf { it.size }
+                println("Hashes: ${hashes.size} ->\n ${hashes.map{ "${it.key} -> ${it.value.size}"}.joinToString("\n")}")
+
+                fileEntries.clear()
+                filesTableModel.fireTableDataChanged()
+
+                val identicalFiles = hashes.flatMap { it.value }
+                    .filter { it.size > 0 }
+                    .sortedBy { it.hash }
+                    .sortedBy { it.fileName }
+                fileEntries.addAll(identicalFiles)
+                filesTableModel.fireTableDataChanged()
+
+                infoModel.statusMessage = "Processing done"
+                infoModel.inProgress = false
+            }
+
             resetFocus()
         }
 
@@ -98,8 +134,8 @@ fun main() {
         }
 
         // Put inside a scroll pane
-        val table = createTable(files)
-        val scrollPane = JScrollPane(table)
+        val filesTable = createFilesTable()
+        val filesScrollPane = JScrollPane(filesTable)
 
         val buttonPanel = JPanel(GridLayout(4, 1, 0, 5))
         buttonPanel.add(dirButton)
@@ -132,10 +168,9 @@ fun main() {
         topbarPanel.add(buttonPanel)
 
         val tablesPanel = JPanel(BorderLayout())
-        tablesPanel.add(scrollPane, BorderLayout.CENTER)
-        tablesPanel.add(scrollPane2, BorderLayout.EAST)
+        tablesPanel.add(filesScrollPane, BorderLayout.CENTER)
+        tablesPanel.add(selectinTablePane, BorderLayout.LINE_END)
         tablesPanel.border = EmptyBorder(0, 2, 2, 2)
-//        tablesPanel.background = Color.RED
 
         mainFrame.contentPane.add(topbarPanel, BorderLayout.NORTH)
         mainFrame.contentPane.add(tablesPanel, BorderLayout.CENTER)
@@ -171,18 +206,27 @@ fun main() {
 }
 
 fun createStatusPanel(): JPanel {
-    val statusPanel = JPanel(GridLayout(5,1))
+    val statusPanel = JPanel(GridLayout(9,1))
     val statusLabel = JLabel("Status: ${infoModel.inProgressString}")
     val msgLabel = JLabel("Message: ${infoModel.statusMessage}")
     val filesLabel = JLabel("Total files: ${infoModel.totalFiles}")
     val queueLabel = JLabel("Files in queue: ${infoModel.inQueue}")
     val processedLabel = JLabel("Files processed: ${infoModel.processedFiles}")
+    val sameFileNamesLabel = JLabel("Identical file names: ${infoModel.identicalFileNames}")
+    val sameFileSizesLabel = JLabel("Identical file sizes: ${infoModel.identicalFileSizes}")
+    val sameFileHashesLabel = JLabel("Identical file hashes: ${infoModel.identicalHashes}")
+    val identicalFilesLabel = JLabel("Identical file files: ${infoModel.identicalFiles}")
+
 
     statusPanel.add(statusLabel)
     statusPanel.add(msgLabel)
     statusPanel.add(processedLabel)
     statusPanel.add(filesLabel)
     statusPanel.add(queueLabel)
+    statusPanel.add(sameFileNamesLabel)
+    statusPanel.add(sameFileSizesLabel)
+    statusPanel.add(sameFileHashesLabel)
+    statusPanel.add(identicalFilesLabel)
 
     infoModel.addChangeListener {
         msgLabel.text = "Message: ${infoModel.statusMessage}"
@@ -190,14 +234,20 @@ fun createStatusPanel(): JPanel {
         filesLabel.text = "Total files: ${infoModel.totalFiles}"
         queueLabel.text = "Files in queue: ${infoModel.inQueue}"
         processedLabel.text = "Files processed: ${infoModel.processedFiles}"
+        sameFileNamesLabel.text = "Identical file names: ${infoModel.identicalFileNames}"
+        sameFileSizesLabel.text = "Identical file sizes: ${infoModel.identicalFileSizes}"
+        sameFileHashesLabel.text = "Identical file hashes: ${infoModel.identicalHashes}"
+        identicalFilesLabel.text = "Identical file files: ${infoModel.identicalFiles}"
     }
 
     return statusPanel
 }
 
 fun reset() {
+    selectedDirs.clear()
     fileQueue.clear()
     fileEntries.clear()
+    filesTableModel.fireTableDataChanged()
 
     infoModel.inProgress = false
     infoModel.inQueue = 0
@@ -222,6 +272,7 @@ fun removeDirFromSelection(table: JTable, dirIdx: Int) {
     model.removeRow(dirIdx)
     selectedDirs.removeAt(dirIdx)
     println("Selected dirs after remove: $selectedDirs")
+    println("Selected dirs after remove: $selectedDirs")
 }
 
 fun createSelectionTable(dirs: List<File>): JTable {
@@ -245,6 +296,7 @@ fun createSelectionTable(dirs: List<File>): JTable {
     table.componentPopupMenu = popupMenu
     table.selectionModel.selectionMode = ListSelectionModel.SINGLE_SELECTION
     table.fillsViewportHeight = true
+    table.maximumSize = Dimension(250, 500)
 
     deleteItem.addActionListener {
         val selectedRow = table.selectedRow
@@ -261,23 +313,8 @@ fun createSelectionTable(dirs: List<File>): JTable {
     return table
 }
 
-fun createTable(files: List<FileEntry>): JTable {
-    // Sample data
-    val columnNames = arrayOf("File Path", "Size", "Modified", "Hash")
-
-    val data = arrayOfNulls<Array<Any>>(files.size)
-    for(i in files.indices) {
-        data[i] = arrayOf(
-            files[i].filePath,
-            files[i].size,
-            formatDate(files[i].modified),
-            files[i].hashShort
-        )
-    }
-
-    // Table model
-    val tableModel = DefaultTableModel(data, columnNames)
-    val table = JTable(tableModel)
+fun createFilesTable(): JTable {
+    val table = JTable(filesTableModel)
     table.fillsViewportHeight = true
 
     return table
